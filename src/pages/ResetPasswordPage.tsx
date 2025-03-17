@@ -9,6 +9,7 @@ export function ResetPasswordPage() {
   const { changePassword, error: authError } = useAuth();
   const [error, setError] = useState<string | null>(null);
   const [isTokenValid, setIsTokenValid] = useState(false);
+  const [isCheckingToken, setIsCheckingToken] = useState(true);
   const navigate = useNavigate();
   const location = useLocation();
   
@@ -20,6 +21,18 @@ export function ResetPasswordPage() {
     
     const checkForToken = async () => {
       try {
+        setIsCheckingToken(true);
+        
+        // Look for code in URL params (Supabase's native flow)
+        const query = new URLSearchParams(window.location.search);
+        const code = query.get('code');
+        
+        if (code) {
+          console.log('Found code in URL params - this is the Supabase native reset flow');
+          setIsTokenValid(true);
+          return true;
+        }
+        
         // Check if we have a session from Supabase auth
         const { data } = await supabase.auth.getSession();
         
@@ -30,7 +43,6 @@ export function ResetPasswordPage() {
         }
         
         // Extract type and access token from URL query parameters
-        const query = new URLSearchParams(window.location.search);
         const type = query.get('type');
         const accessToken = query.get('access_token');
         
@@ -73,6 +85,8 @@ export function ResetPasswordPage() {
       } catch (err) {
         console.error('Error checking token:', err);
         return false;
+      } finally {
+        setIsCheckingToken(false);
       }
     };
     
@@ -96,6 +110,27 @@ export function ResetPasswordPage() {
       throw err;
     }
   };
+
+  if (isCheckingToken) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8 animate-fade-in">
+        <div className="fixed inset-0 -z-10">
+          <div className="absolute inset-0 bg-[url('https://images.unsplash.com/photo-1586281380349-632531db7ed4?auto=format&fit=crop&q=80&w=2070')] bg-cover bg-center opacity-5" />
+        </div>
+        <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
+          <div className="flex justify-center items-center mb-8">
+            <Layout className="w-10 h-10 text-blue-600" />
+            <h1 className="text-center text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-600 to-indigo-600 ml-2">
+              NestTask
+            </h1>
+          </div>
+          <div className="animate-pulse text-gray-600">
+            Verifying your reset link...
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8 animate-fade-in">
