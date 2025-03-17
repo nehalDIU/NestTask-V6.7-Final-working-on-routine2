@@ -1,19 +1,17 @@
 import { useState } from 'react';
 import { LoginForm } from './LoginForm';
 import { SignupForm } from './SignupForm';
-import { ForgotPasswordForm } from './ForgotPasswordForm';
 import { Layout } from 'lucide-react';
 import type { LoginCredentials, SignupCredentials } from '../../types/auth';
 
 interface AuthPageProps {
-  onLogin: (credentials: LoginCredentials) => Promise<void>;
-  onSignup: (credentials: SignupCredentials) => Promise<void>;
-  onResetPassword: (email: string) => Promise<void>;
+  onLogin: (credentials: LoginCredentials) => void;
+  onSignup: (credentials: SignupCredentials) => void;
   error?: string;
 }
 
-export function AuthPage({ onLogin, onSignup, onResetPassword, error }: AuthPageProps) {
-  const [authMode, setAuthMode] = useState<'login' | 'signup' | 'reset'>('login');
+export function AuthPage({ onLogin, onSignup, error }: AuthPageProps) {
+  const [isLogin, setIsLogin] = useState(true);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8 animate-fade-in">
@@ -31,27 +29,16 @@ export function AuthPage({ onLogin, onSignup, onResetPassword, error }: AuthPage
       </div>
 
       <div className="sm:mx-auto sm:w-full sm:max-w-md animate-slide-up">
-        {authMode === 'login' && (
+        {isLogin ? (
           <LoginForm
             onSubmit={onLogin}
-            onSwitchToSignup={() => setAuthMode('signup')}
-            onForgotPassword={() => setAuthMode('reset')}
+            onSwitchToSignup={() => setIsLogin(false)}
             error={error}
           />
-        )}
-        
-        {authMode === 'signup' && (
+        ) : (
           <SignupForm
             onSubmit={onSignup}
-            onSwitchToLogin={() => setAuthMode('login')}
-            error={error}
-          />
-        )}
-        
-        {authMode === 'reset' && (
-          <ForgotPasswordForm
-            onSubmit={onResetPassword}
-            onBack={() => setAuthMode('login')}
+            onSwitchToLogin={() => setIsLogin(true)}
             error={error}
           />
         )}
