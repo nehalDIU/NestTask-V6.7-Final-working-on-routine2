@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
 import { getAuthErrorMessage } from '../utils/authErrors';
+import { getAuthRedirectUrl } from '../utils/environment';
 import type { LoginCredentials, SignupCredentials, User } from '../types/auth';
 
 export async function loginUser({ email, password }: LoginCredentials): Promise<User> {
@@ -179,8 +180,12 @@ export async function resetPassword(email: string): Promise<void> {
       throw new Error('Email is required');
     }
 
+    // Get the correct redirect URL for the current environment
+    const redirectUrl = getAuthRedirectUrl('reset-password');
+    console.log('Using redirect URL:', redirectUrl);
+
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${window.location.origin}/reset-password`,
+      redirectTo: redirectUrl,
     });
 
     if (error) throw error;
@@ -251,13 +256,33 @@ export async function updatePassword(password: string): Promise<void> {
     if (!accessToken) {
       const searchParams = new URLSearchParams(window.location.search);
       const type = searchParams.get('type');
+      const code = searchParams.get('code'); // For Supabase's native flow
       
       console.log('URL search params type:', type);
+      console.log('URL search params code:', code);
       
       if (type === 'recovery') {
         console.log('Found recovery type in search params');
         accessToken = searchParams.get('access_token') || '';
         tokenType = 'recovery';
+      } else if (code) {
+        console.log('Found code in search params - using Supabase native flow');
+        // With the code parameter, we're likely in Supabase's native flow
+        // Just try to update the password directly
+        try {
+          const { error } = await supabase.auth.updateUser({ password });
+          
+          if (error) {
+            console.error('Error updating with code flow:', error);
+            throw error;
+          }
+          
+          console.log('Password updated successfully with code flow');
+          return;
+        } catch (err) {
+          console.error('Error in code-based password update:', err);
+          // Continue to try other methods
+        }
       }
     }
     
@@ -307,8 +332,21 @@ export async function updatePassword(password: string): Promise<void> {
         throw error;
       }
     } else {
-      console.error('No reset token found in URL');
-      throw new Error('No valid password reset token found. Please request a new password reset link.');
+      // One last attempt - try updating directly without session/token
+      try {
+        console.log('Attempting direct password update as last resort');
+        const { error } = await supabase.auth.updateUser({ password });
+        
+        if (error) {
+          console.error('Error with direct password update:', error);
+          throw new Error('No valid password reset token found. Please request a new password reset link.');
+        }
+        
+        console.log('Password updated successfully with direct approach');
+      } catch (error) {
+        console.error('Final password update attempt failed:', error);
+        throw new Error('No valid password reset token found. Please request a new password reset link.');
+      }
     }
   } catch (error: any) {
     console.error('Update password error:', error);
