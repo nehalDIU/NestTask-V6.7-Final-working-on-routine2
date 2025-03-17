@@ -7,12 +7,12 @@ import type { LoginCredentials, SignupCredentials } from '../types/auth';
 interface AuthPageProps {
   onLogin: (credentials: LoginCredentials) => Promise<void>;
   onSignup: (credentials: SignupCredentials) => Promise<void>;
-  onResetPassword: (email: string) => Promise<void>;
+  onForgotPassword: (email: string) => Promise<void>;
   error?: string;
 }
 
-export function AuthPage({ onLogin, onSignup, onResetPassword, error }: AuthPageProps) {
-  const [authMode, setAuthMode] = useState<'login' | 'signup' | 'reset'>('login');
+export function AuthPage({ onLogin, onSignup, onForgotPassword, error }: AuthPageProps) {
+  const [authState, setAuthState] = useState<'login' | 'signup' | 'forgot-password'>('login');
 
   return (
     <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
@@ -23,27 +23,25 @@ export function AuthPage({ onLogin, onSignup, onResetPassword, error }: AuthPage
       </div>
 
       <div className="sm:mx-auto sm:w-full sm:max-w-md">
-        {authMode === 'login' && (
+        {authState === 'login' && (
           <LoginForm
             onSubmit={onLogin}
-            onSwitchToSignup={() => setAuthMode('signup')}
-            onForgotPassword={() => setAuthMode('reset')}
+            onSwitchToSignup={() => setAuthState('signup')}
+            onForgotPassword={() => setAuthState('forgot-password')}
             error={error}
           />
         )}
-        
-        {authMode === 'signup' && (
+        {authState === 'signup' && (
           <SignupForm
             onSubmit={onSignup}
-            onSwitchToLogin={() => setAuthMode('login')}
+            onSwitchToLogin={() => setAuthState('login')}
             error={error}
           />
         )}
-        
-        {authMode === 'reset' && (
+        {authState === 'forgot-password' && (
           <ForgotPasswordForm
-            onSubmit={onResetPassword}
-            onBack={() => setAuthMode('login')}
+            onSubmit={onForgotPassword}
+            onBackToLogin={() => setAuthState('login')}
             error={error}
           />
         )}
