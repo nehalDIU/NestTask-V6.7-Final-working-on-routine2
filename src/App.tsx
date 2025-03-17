@@ -316,6 +316,14 @@ export default function App() {
           element={<ResetPasswordPage />}
         />
         <Route 
+          path="/reset-password/:token" 
+          element={<ResetPasswordPage />}
+        />
+        <Route 
+          path="/auth/reset-password" 
+          element={<ResetPasswordPage />}
+        />
+        <Route 
           path="/auth" 
           element={
             !user ? (
