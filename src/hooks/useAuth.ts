@@ -1,119 +1,51 @@
-import { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
-import { loginUser, signupUser, logoutUser, resetPassword, updatePassword } from '../services/auth.service';
-import type { User, LoginCredentials, SignupCredentials } from '../types/auth';
+import { useState } from 'react';
+import { LoginForm } from '../components/auth/LoginForm';
+import { SignupForm } from '../components/auth/SignupForm';
+import { ForgotPasswordForm } from '../components/auth/ForgotPasswordForm';
+import type { LoginCredentials, SignupCredentials } from '../types/auth';
 
-export function useAuth() {
-  const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+interface AuthPageProps {
+  onLogin: (credentials: LoginCredentials) => Promise<void>;
+  onSignup: (credentials: SignupCredentials) => Promise<void>;
+  onForgotPassword: (email: string) => Promise<void>;
+  error?: string;
+}
 
-  useEffect(() => {
-    checkSession();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(handleAuthChange);
-    return () => {
-      subscription.unsubscribe();
-    };
-  }, []);
+export function AuthPage({ onLogin, onSignup, onForgotPassword, error }: AuthPageProps) {
+  const [authState, setAuthState] = useState<'login' | 'signup' | 'forgot-password'>('login');
 
-  const checkSession = async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      if (session?.user) {
-        await updateUserState(session.user);
-      }
-    } catch (err) {
-      console.error('Session check error:', err);
-      setError('Failed to check authentication status');
-    } finally {
-      setLoading(false);
-    }
-  };
+  return (
+    <div className="min-h-screen bg-gray-50 flex flex-col justify-center py-12 sm:px-6 lg:px-8">
+      <div className="sm:mx-auto sm:w-full sm:max-w-md">
+        <h1 className="text-center text-3xl font-extrabold text-gray-900 mb-8">
+          NestTask
+        </h1>
+      </div>
 
-  const handleAuthChange = async (_event: string, session: any) => {
-    if (session?.user) {
-      await updateUserState(session.user);
-    } else {
-      setUser(null);
-    }
-    setLoading(false);
-  };
-
-  const updateUserState = async (authUser: any) => {
-    try {
-      setUser({
-        id: authUser.id,
-        email: authUser.email!,
-        name: authUser.user_metadata?.name || authUser.email?.split('@')[0] || '',
-        role: authUser.user_metadata?.role || 'user',
-        createdAt: authUser.created_at,
-      });
-    } catch (err) {
-      console.error('Error updating user state:', err);
-      setError('Failed to update user information');
-    }
-  };
-
-  const login = async (credentials: LoginCredentials) => {
-    try {
-      setError(null);
-      const user = await loginUser(credentials);
-      setUser(user);
-    } catch (err: any) {
-      setError(err.message);
-      throw err;
-    }
-  };
-
-  const signup = async (credentials: SignupCredentials) => {
-    try {
-      setError(null);
-      const user = await signupUser(credentials);
-      setUser(user);
-    } catch (err: any) {
-      setError(err.message);
-      throw err;
-    }
-  };
-
-  const logout = async () => {
-    try {
-      setError(null);
-      await logoutUser();
-      setUser(null);
-    } catch (err: any) {
-      setError(err.message);
-    }
-  };
-
-  const forgotPassword = async (email: string) => {
-    try {
-      setError(null);
-      await resetPassword(email);
-    } catch (err: any) {
-      setError(err.message);
-      throw err;
-    }
-  };
-
-  const changePassword = async (password: string) => {
-    try {
-      setError(null);
-      await updatePassword(password);
-    } catch (err: any) {
-      setError(err.message);
-      throw err;
-    }
-  };
-
-  return {
-    user,
-    loading,
-    error,
-    login,
-    signup,
-    logout,
-    forgotPassword,
-    changePassword
-  };
+      <div className="sm:mx-auto sm:w-full sm:max-w-md">
+        {authState === 'login' && (
+          <LoginForm
+            onSubmit={onLogin}
+            onSwitchToSignup={() => setAuthState('signup')}
+            onForgotPassword={() => setAuthState('forgot-password')}
+            error={error}
+          />
+        )}
+        {authState === 'signup' && (
+          <SignupForm
+            onSubmit={onSignup}
+            onSwitchToLogin={() => setAuthState('login')}
+            error={error}
+          />
+        )}
+        {authState === 'forgot-password' && (
+          <ForgotPasswordForm
+            onSubmit={onForgotPassword}
+            onBackToLogin={() => setAuthState('login')}
+            error={error}
+          />
+        )}
+      </div>
+    </div>
+  );
 }
