@@ -8,17 +8,24 @@ import type { Task, NewTask } from '../types/task';
 // Extended Task type with userId for offline storage
 interface OfflineTask extends Task {
   userId: string;
-  updatedAt?: string; // Add updatedAt property
+  updatedAt?: string;
+  _isOffline?: boolean; 
+  _isOfflineUpdated?: boolean;
+  _isOfflineDeleted?: boolean;
 }
+
+// Define timestamp for cached tasks data
+const TASKS_CACHE_TIMESTAMP_KEY = 'tasks_last_fetched';
 
 export function useTasks(userId: string | undefined) {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [retryCount, setRetryCount] = useState(0);
+  const [syncInProgress, setSyncInProgress] = useState(false);
   const isOffline = useOfflineStatus();
 
-  const loadTasks = useCallback(async () => {
+  const loadTasks = useCallback(async (forceRefresh = false) => {
     if (!userId) return;
 
     try {
@@ -34,23 +41,53 @@ export function useTasks(userId: string | undefined) {
         const userTasks = offlineTasks.filter((task: OfflineTask) => task.userId === userId);
         setTasks(userTasks as Task[]);
       } else {
-        // If online, try to get tasks from the server
-        // Ensure connection is established
-        const isConnected = await testConnection();
-        if (!isConnected) {
-          throw new Error('Unable to connect to database');
-        }
-
-        const data = await fetchTasks(userId);
-        setTasks(data);
+        // Online with cache validation
+        const lastFetched = localStorage.getItem(`${TASKS_CACHE_TIMESTAMP_KEY}_${userId}`);
+        const cacheAge = lastFetched ? Date.now() - parseInt(lastFetched) : Infinity;
+        const cacheExpired = cacheAge > 1000 * 60 * 10; // 10 minutes cache lifetime
         
-        // Store tasks in IndexedDB for offline use
-        // Add userId to each task for offline filtering
-        const tasksWithUserId = data.map(task => ({
-          ...task,
-          userId
-        }));
-        await saveToIndexedDB(STORES.TASKS, tasksWithUserId);
+        if (forceRefresh || cacheExpired) {
+          // Ensure connection is established
+          const isConnected = await testConnection();
+          if (!isConnected) {
+            throw new Error('Unable to connect to database');
+          }
+
+          // If cache expired or force refresh, fetch from server
+          console.log('Fetching fresh tasks from server');
+          const data = await fetchTasks(userId);
+          setTasks(data);
+          
+          // Store tasks in IndexedDB for offline use
+          // Add userId to each task for offline filtering
+          const tasksWithUserId = data.map(task => ({
+            ...task,
+            userId
+          }));
+          await saveToIndexedDB(STORES.TASKS, tasksWithUserId);
+          
+          // Update cache timestamp
+          localStorage.setItem(`${TASKS_CACHE_TIMESTAMP_KEY}_${userId}`, Date.now().toString());
+        } else {
+          // Use cached data for better performance
+          console.log('Using cached tasks - cache age:', Math.round(cacheAge / 1000), 'seconds');
+          const offlineTasks = await getAllFromIndexedDB(STORES.TASKS);
+          const userTasks = offlineTasks.filter((task: OfflineTask) => task.userId === userId);
+          
+          if (userTasks.length > 0) {
+            setTasks(userTasks as Task[]);
+          } else {
+            // If cache is empty, force a refresh
+            const data = await fetchTasks(userId);
+            setTasks(data);
+            const tasksWithUserId = data.map(task => ({
+              ...task,
+              userId
+            }));
+            await saveToIndexedDB(STORES.TASKS, tasksWithUserId);
+            localStorage.setItem(`${TASKS_CACHE_TIMESTAMP_KEY}_${userId}`, Date.now().toString());
+          }
+        }
       }
     } catch (err: any) {
       console.error('Error fetching tasks:', err);
@@ -102,9 +139,8 @@ export function useTasks(userId: string | undefined) {
           schema: 'public',
           table: 'tasks',
           filter: `user_id=eq.${userId}`
-        }, payload => {
-          console.log('Real-time task update:', payload);
-          loadTasks();
+        }, () => {
+          loadTasks(true); // Force refresh on database changes
         })
         .subscribe();
 
@@ -133,7 +169,8 @@ export function useTasks(userId: string | undefined) {
           updatedAt: new Date().toISOString(),
           status: 'my-tasks', // Using valid TaskStatus value
           isAdminTask: false,
-          userId // Add userId for offline filtering
+          userId, // Add userId for offline filtering
+          _isOffline: true // Mark as created offline
         };
         
         // Store in IndexedDB
@@ -156,6 +193,9 @@ export function useTasks(userId: string | undefined) {
           userId
         };
         await saveToIndexedDB(STORES.TASKS, taskWithUserId);
+        
+        // Update cache timestamp
+        localStorage.setItem(`${TASKS_CACHE_TIMESTAMP_KEY}_${userId}`, Date.now().toString());
       }
       
       return result;
@@ -183,6 +223,7 @@ export function useTasks(userId: string | undefined) {
           ...existingTask,
           ...updates,
           updatedAt: new Date().toISOString(),
+          _isOfflineUpdated: true // Mark as updated offline
         };
         
         // Store in IndexedDB
@@ -199,12 +240,21 @@ export function useTasks(userId: string | undefined) {
         // Update local state
         setTasks(prev => prev.map(task => task.id === taskId ? result : task));
         
-        // Update IndexedDB with userId
-        const taskWithUserId: OfflineTask = {
-          ...result,
-          userId: userId || ''
-        };
-        await saveToIndexedDB(STORES.TASKS, taskWithUserId);
+        // Update IndexedDB
+        const existingTask = await getByIdFromIndexedDB(STORES.TASKS, taskId) as OfflineTask;
+        if (existingTask) {
+          const updatedTask: OfflineTask = {
+            ...existingTask,
+            ...result,
+            userId: existingTask.userId
+          };
+          await saveToIndexedDB(STORES.TASKS, updatedTask);
+        }
+        
+        // Update cache timestamp
+        if (userId) {
+          localStorage.setItem(`${TASKS_CACHE_TIMESTAMP_KEY}_${userId}`, Date.now().toString());
+        }
         
         return result;
       }
@@ -220,23 +270,42 @@ export function useTasks(userId: string | undefined) {
       setError(null);
       
       if (isOffline) {
-        // Remove from IndexedDB
-        await deleteFromIndexedDB(STORES.TASKS, taskId);
+        // In offline mode, mark for deletion but don't fully delete yet
+        const existingTask = await getByIdFromIndexedDB(STORES.TASKS, taskId) as OfflineTask;
+        
+        if (!existingTask) {
+          throw new Error('Task not found');
+        }
+        
+        // If it's a temp task (created offline), delete it immediately
+        if (existingTask._isOffline) {
+          await deleteFromIndexedDB(STORES.TASKS, taskId);
+        } else {
+          // Otherwise mark it for deletion when back online
+          const markedTask = {
+            ...existingTask,
+            _isOfflineDeleted: true
+          };
+          await saveToIndexedDB(STORES.TASKS, markedTask);
+        }
         
         // Update local state
         setTasks(prev => prev.filter(task => task.id !== taskId));
       } else {
-        // Delete from server
+        // Delete task online
         await deleteTask(taskId);
         
         // Update local state
         setTasks(prev => prev.filter(task => task.id !== taskId));
         
-        // Remove from IndexedDB
+        // Delete from IndexedDB
         await deleteFromIndexedDB(STORES.TASKS, taskId);
+        
+        // Update cache timestamp
+        if (userId) {
+          localStorage.setItem(`${TASKS_CACHE_TIMESTAMP_KEY}_${userId}`, Date.now().toString());
+        }
       }
-      
-      return true;
     } catch (err: any) {
       console.error('Error deleting task:', err);
       setError(err.message || 'Failed to delete task');
@@ -244,12 +313,96 @@ export function useTasks(userId: string | undefined) {
     }
   };
 
-  // Add a function to sync offline changes when coming back online
+  // Enhanced sync function to handle all offline changes
   const syncOfflineChanges = async () => {
-    // This would be called when the app detects it's back online
-    // It would process any offline tasks changes and sync them to the server
-    // For simplicity, we're not implementing the full sync logic here
-    loadTasks();
+    if (isOffline || syncInProgress || !userId) {
+      return;
+    }
+    
+    try {
+      setSyncInProgress(true);
+      console.log('Starting task sync process...');
+      
+      // Get all tasks for current user
+      const allTasks = await getAllFromIndexedDB(STORES.TASKS);
+      const userTasks = allTasks.filter((task: OfflineTask) => task.userId === userId);
+      let hasChanges = false;
+      let syncErrors = 0;
+      
+      // First process deletions
+      const deletedTasks = userTasks.filter((task: OfflineTask) => task._isOfflineDeleted);
+      for (const task of deletedTasks) {
+        try {
+          // Skip temp tasks (they don't exist on server)
+          if (!task._isOffline) {
+            await deleteTask(task.id);
+          }
+          await deleteFromIndexedDB(STORES.TASKS, task.id);
+          hasChanges = true;
+          console.log(`Deleted task: ${task.id}`);
+        } catch (err) {
+          console.error(`Failed to sync delete for task ${task.id}:`, err);
+          syncErrors++;
+        }
+      }
+      
+      // Then process new tasks
+      const newTasks = userTasks.filter((task: OfflineTask) => task._isOffline && !task._isOfflineDeleted);
+      for (const task of newTasks) {
+        try {
+          // Create a clean version without temp fields
+          const { _isOffline, _isOfflineUpdated, _isOfflineDeleted, id, userId: _, ...taskData } = task;
+          
+          // Create task on server
+          const newTask = await createTask(userId, taskData as NewTask);
+          
+          // Delete temp task and save new one
+          await deleteFromIndexedDB(STORES.TASKS, task.id);
+          await saveToIndexedDB(STORES.TASKS, { ...newTask, userId });
+          
+          hasChanges = true;
+          console.log(`Created new task: ${newTask.id} (replaced temp: ${task.id})`);
+        } catch (err) {
+          console.error(`Failed to sync new task ${task.id}:`, err);
+          syncErrors++;
+        }
+      }
+      
+      // Finally process updates
+      const updatedTasks = userTasks.filter((task: OfflineTask) => task._isOfflineUpdated && !task._isOfflineDeleted && !task._isOffline);
+      for (const task of updatedTasks) {
+        try {
+          // Create a clean version without offline flags
+          const { _isOffline, _isOfflineUpdated, _isOfflineDeleted, userId: _, ...taskData } = task;
+          
+          // Update task on server
+          await updateTask(task.id, taskData);
+          
+          // Update in IndexedDB without offline flags
+          await saveToIndexedDB(STORES.TASKS, { ...taskData, userId, id: task.id });
+          
+          hasChanges = true;
+          console.log(`Updated task: ${task.id}`);
+        } catch (err) {
+          console.error(`Failed to sync update for task ${task.id}:`, err);
+          syncErrors++;
+        }
+      }
+      
+      if (hasChanges) {
+        // Refresh tasks from server after sync
+        await loadTasks(true);
+        console.log(`Task sync completed with ${syncErrors} errors`);
+      } else {
+        console.log('No offline task changes to sync');
+      }
+      
+    } catch (err) {
+      console.error('Error syncing offline task changes:', err);
+      setError('Failed to sync offline changes');
+    } finally {
+      setSyncInProgress(false);
+    }
   };
 
   return {
@@ -259,8 +412,9 @@ export function useTasks(userId: string | undefined) {
     createTask: handleCreateTask,
     updateTask: handleUpdateTask,
     deleteTask: handleDeleteTask,
-    refreshTasks: loadTasks,
-    isOffline,
-    syncOfflineChanges
+    refreshTasks: () => loadTasks(true),
+    syncOfflineChanges,
+    isSyncing: syncInProgress,
+    isOffline
   };
 }

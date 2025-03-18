@@ -3,50 +3,78 @@
  */
 
 // IndexedDB database name and version
-const DB_NAME = 'nestTaskOfflineDB';
-const DB_VERSION = 1;
+export const DB_NAME = 'nesttask_offline_db';
+export const DB_VERSION = 3; // Update version to 3
 
 // Store names for different types of data
-const STORES = {
+export const STORES = {
   TASKS: 'tasks',
   ROUTINES: 'routines',
   USER_DATA: 'userData',
+  COURSES: 'courses',
+  MATERIALS: 'materials',
+  TEACHERS: 'teachers'
 };
 
 /**
  * Initialize the IndexedDB database
  */
-export async function initDB(): Promise<IDBDatabase> {
+export const openDatabase = () => {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    const request = window.indexedDB.open(DB_NAME, DB_VERSION);
 
     request.onerror = (event) => {
-      console.error('Error opening IndexedDB:', (event.target as IDBRequest).error);
-      reject((event.target as IDBRequest).error);
+      console.error('Error opening IndexedDB', event);
+      reject('Error opening IndexedDB');
     };
 
     request.onsuccess = (event) => {
-      resolve((event.target as IDBOpenDBRequest).result);
+      const db = (event.target as IDBOpenDBRequest).result;
+      resolve(db);
     };
 
     request.onupgradeneeded = (event) => {
       const db = (event.target as IDBOpenDBRequest).result;
-      
-      // Create object stores if they don't exist
-      if (!db.objectStoreNames.contains(STORES.TASKS)) {
-        db.createObjectStore(STORES.TASKS, { keyPath: 'id' });
+      const oldVersion = event.oldVersion;
+
+      if (oldVersion < 1) {
+        // Initial schema setup
+        if (!db.objectStoreNames.contains(STORES.TASKS)) {
+          db.createObjectStore(STORES.TASKS, { keyPath: 'id' });
+          console.log('Created tasks store');
+        }
+        if (!db.objectStoreNames.contains(STORES.ROUTINES)) {
+          db.createObjectStore(STORES.ROUTINES, { keyPath: 'id' });
+          console.log('Created routines store');
+        }
+        if (!db.objectStoreNames.contains(STORES.USER_DATA)) {
+          db.createObjectStore(STORES.USER_DATA, { keyPath: 'id' });
+          console.log('Created userData store');
+        }
       }
       
-      if (!db.objectStoreNames.contains(STORES.ROUTINES)) {
-        db.createObjectStore(STORES.ROUTINES, { keyPath: 'id' });
+      if (oldVersion < 2) {
+        // Version 2 schema updates
+        if (!db.objectStoreNames.contains(STORES.COURSES)) {
+          db.createObjectStore(STORES.COURSES, { keyPath: 'id' });
+          console.log('Created courses store');
+        }
+        if (!db.objectStoreNames.contains(STORES.MATERIALS)) {
+          db.createObjectStore(STORES.MATERIALS, { keyPath: 'id' });
+          console.log('Created materials store');
+        }
       }
       
-      if (!db.objectStoreNames.contains(STORES.USER_DATA)) {
-        db.createObjectStore(STORES.USER_DATA, { keyPath: 'id' });
+      if (oldVersion < 3) {
+        // Version 3 schema updates
+        if (!db.objectStoreNames.contains(STORES.TEACHERS)) {
+          db.createObjectStore(STORES.TEACHERS, { keyPath: 'id' });
+          console.log('Created teachers store');
+        }
       }
     };
   });
-}
+};
 
 /**
  * Save data to IndexedDB
@@ -55,7 +83,7 @@ export async function initDB(): Promise<IDBDatabase> {
  */
 export async function saveToIndexedDB(storeName: string, data: any): Promise<void> {
   try {
-    const db = await initDB();
+    const db = await openDatabase();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(storeName, 'readwrite');
       const store = transaction.objectStore(storeName);
@@ -91,7 +119,7 @@ export async function saveToIndexedDB(storeName: string, data: any): Promise<voi
  */
 export async function getAllFromIndexedDB(storeName: string): Promise<any[]> {
   try {
-    const db = await initDB();
+    const db = await openDatabase();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(storeName, 'readonly');
       const store = transaction.objectStore(storeName);
@@ -119,7 +147,7 @@ export async function getAllFromIndexedDB(storeName: string): Promise<any[]> {
  */
 export async function getByIdFromIndexedDB(storeName: string, id: string): Promise<any> {
   try {
-    const db = await initDB();
+    const db = await openDatabase();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(storeName, 'readonly');
       const store = transaction.objectStore(storeName);
@@ -147,7 +175,7 @@ export async function getByIdFromIndexedDB(storeName: string, id: string): Promi
  */
 export async function deleteFromIndexedDB(storeName: string, id: string): Promise<void> {
   try {
-    const db = await initDB();
+    const db = await openDatabase();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(storeName, 'readwrite');
       const store = transaction.objectStore(storeName);
@@ -174,7 +202,7 @@ export async function deleteFromIndexedDB(storeName: string, id: string): Promis
  */
 export async function clearIndexedDBStore(storeName: string): Promise<void> {
   try {
-    const db = await initDB();
+    const db = await openDatabase();
     return new Promise((resolve, reject) => {
       const transaction = db.transaction(storeName, 'readwrite');
       const store = transaction.objectStore(storeName);
@@ -193,7 +221,4 @@ export async function clearIndexedDBStore(storeName: string): Promise<void> {
     console.error('IndexedDB clear error:', error);
     throw error;
   }
-}
-
-// Export store names for easy reference
-export { STORES }; 
+} 

@@ -81,21 +81,30 @@ export function RoutinePage() {
     }
 
     console.log("Teachers available for RoutinePage:", teachers.length);
+    console.log("Courses available for RoutinePage:", courses.length);
 
     const enriched = currentRoutine.slots.map(slot => {
+      // Find matching course by ID
       const course = slot.courseId ? courses.find(c => c.id === slot.courseId) : undefined;
+      
+      // Find matching teacher by ID
       const teacher = slot.teacherId ? teachers.find(t => t.id === slot.teacherId) : undefined;
       
-      console.log(`RoutinePage - Slot ${slot.id} - teacherId: ${slot.teacherId}, teacherName: ${slot.teacherName}, Found teacher:`, teacher?.name || "null");
+      // Prioritize using slot's own courseName/teacherName if available (for offline support)
+      // Fall back to course/teacher objects if available
+      const courseName = slot.courseName || (course ? course.name : 'Unknown Course');
+      const courseCode = course?.code || 'N/A';
+      const teacherName = slot.teacherName || (teacher ? teacher.name : 'Unknown Teacher');
       
-      const courseName = slot.courseName || (course ? course.name : undefined);
-      const teacherName = slot.teacherName || (teacher ? teacher.name : undefined);
+      console.log(`RoutinePage - Slot ${slot.id} - courseId: ${slot.courseId}, courseName: ${slot.courseName || courseName}`);
+      console.log(`RoutinePage - Slot ${slot.id} - teacherId: ${slot.teacherId}, teacherName: ${slot.teacherName || teacherName}`);
       
       return {
         ...slot,
         course,
         teacher,
         courseName,
+        courseCode,
         teacherName
       };
     });
@@ -357,13 +366,13 @@ export function RoutinePage() {
 
                   <div className="flex-1 p-3 sm:p-5 md:p-8">
                     <h3 className="text-base sm:text-xl md:text-2xl font-medium text-slate-600 dark:text-slate-300 mb-2 sm:mb-4 md:mb-6">
-                      {slot.courseName || (slot.course ? slot.course.name : 'No Course Name')}
+                      {slot.courseName || 'No Course Name'}
                     </h3>
                     
                     <div className="space-y-2 sm:space-y-3 md:space-y-4">
                       <div className="flex justify-between items-center">
                         <span className="text-xs sm:text-sm md:text-lg text-gray-500 dark:text-gray-400">Course</span>
-                        <span className="text-xs sm:text-sm md:text-lg font-medium text-gray-800 dark:text-gray-200">{slot.course?.code || 'N/A'}</span>
+                        <span className="text-xs sm:text-sm md:text-lg font-medium text-gray-800 dark:text-gray-200">{slot.courseCode || 'N/A'}</span>
                       </div>
                       
                       <div className="flex justify-between items-center">
@@ -381,9 +390,9 @@ export function RoutinePage() {
                                 setSelectedTeacher(fullTeacher || null);
                               }}
                               className="text-indigo-500 dark:text-indigo-400 hover:text-indigo-600 dark:hover:text-indigo-300 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-1 rounded"
-                              title={slot.teacherName || (slot.teacher ? slot.teacher.name : 'N/A')}
+                              title={slot.teacherName || 'Unknown Teacher'}
                             >
-                              {getInitials(slot.teacherName || (slot.teacher ? slot.teacher.name : undefined))}
+                              {getInitials(slot.teacherName || 'Unknown')}
                             </button>
                           ) : (
                             'N/A'

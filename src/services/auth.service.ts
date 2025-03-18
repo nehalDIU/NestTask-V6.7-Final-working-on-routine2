@@ -2,11 +2,18 @@ import { supabase } from '../lib/supabase';
 import { getAuthErrorMessage } from '../utils/authErrors';
 import type { LoginCredentials, SignupCredentials, User } from '../types/auth';
 
+// Check if "Remember me" is enabled
+const isRememberMeEnabled = () => localStorage.getItem('nesttask_remember_me') === 'true';
+
 export async function loginUser({ email, password }: LoginCredentials): Promise<User> {
   try {
     if (!email || !password) {
       throw new Error('Email and password are required');
     }
+
+    // Check if "Remember me" is enabled from localStorage
+    const rememberMe = localStorage.getItem('nesttask_remember_me') === 'true';
+    console.log('Logging in with remember me:', rememberMe);
 
     const { data: authData, error: authError } = await supabase.auth.signInWithPassword({ 
       email, 
@@ -181,9 +188,10 @@ export async function resetPassword(email: string): Promise<void> {
     
     console.log('Sending password reset email to:', email);
     
-    // Use a specific hash fragment that will be detected in App.tsx
-    // The #auth/recovery path will be used to identify this is a recovery flow
+    // The redirectTo URL must be added to the "Additional Redirect URLs" in the Supabase Dashboard
+    // under Authentication -> URL Configuration
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
+      // Add the hash fragment to force our app to show the reset password UI
       redirectTo: `${window.location.origin}/#auth/recovery`,
     });
     

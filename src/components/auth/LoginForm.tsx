@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Mail, Lock, Loader2 } from 'lucide-react';
+import { Mail, Lock, Loader2, Eye, EyeOff, LogIn } from 'lucide-react';
 import { AuthError } from './AuthError';
 import { AuthInput } from './AuthInput';
 import { AuthSubmitButton } from './AuthSubmitButton';
@@ -7,7 +7,7 @@ import { validateEmail, validatePassword } from '../../utils/authErrors';
 import type { LoginCredentials } from '../../types/auth';
 
 interface LoginFormProps {
-  onSubmit: (credentials: LoginCredentials) => Promise<void>;
+  onSubmit: (credentials: LoginCredentials, rememberMe: boolean) => Promise<void>;
   onSwitchToSignup: () => void;
   onForgotPassword: () => void;
   error?: string;
@@ -21,6 +21,8 @@ export function LoginForm({ onSubmit, onSwitchToSignup, onForgotPassword, error 
   const [isLoading, setIsLoading] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const [touched, setTouched] = useState({ email: false, password: false });
+  const [showPassword, setShowPassword] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
 
   const validateForm = () => {
     if (!validateEmail(credentials.email)) {
@@ -42,7 +44,7 @@ export function LoginForm({ onSubmit, onSwitchToSignup, onForgotPassword, error 
 
     setIsLoading(true);
     try {
-      await onSubmit(credentials);
+      await onSubmit(credentials, rememberMe);
     } catch (err: any) {
       setLocalError(err.message);
     } finally {
@@ -57,8 +59,11 @@ export function LoginForm({ onSubmit, onSwitchToSignup, onForgotPassword, error 
   };
 
   return (
-    <div className="w-full max-w-md p-8 bg-white dark:bg-gray-800 rounded-2xl shadow-xl backdrop-blur-lg border border-gray-100 dark:border-gray-700">
+    <div className="w-full max-w-md p-8 bg-white dark:bg-gray-800 rounded-2xl shadow-xl backdrop-blur-lg border border-gray-100 dark:border-gray-700 transition-all duration-300">
       <div className="text-center mb-8">
+        <div className="inline-flex items-center justify-center p-3 bg-blue-50 dark:bg-blue-900/20 rounded-full mb-4">
+          <LogIn className="w-8 h-8 text-blue-600 dark:text-blue-400" />
+        </div>
         <h2 className="text-3xl font-bold bg-gradient-to-r from-blue-600 to-indigo-600 bg-clip-text text-transparent">
           Welcome Back
         </h2>
@@ -81,24 +86,39 @@ export function LoginForm({ onSubmit, onSwitchToSignup, onForgotPassword, error 
         />
 
         <AuthInput
-          type="password"
+          type={showPassword ? "text" : "password"}
           value={credentials.password}
           onChange={(value) => handleInputChange('password', value)}
           label="Password"
           placeholder="Enter your password"
           icon={Lock}
           error={touched.password && !validatePassword(credentials.password) ? 'Password must be at least 6 characters' : ''}
+          rightElement={
+            <button 
+              type="button"
+              className="text-gray-400 hover:text-gray-500 transition-colors"
+              onClick={() => setShowPassword(!showPassword)}
+              tabIndex={-1}
+            >
+              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
+          }
         />
 
         <div className="flex items-center justify-between text-sm">
-          <label className="flex items-center">
-            <input type="checkbox" className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500" />
+          <label className="flex items-center cursor-pointer">
+            <input 
+              type="checkbox" 
+              checked={rememberMe}
+              onChange={(e) => setRememberMe(e.target.checked)}
+              className="w-4 h-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 cursor-pointer"
+            />
             <span className="ml-2 text-gray-600 dark:text-gray-400">Remember me</span>
           </label>
           <button 
             type="button" 
             onClick={onForgotPassword}
-            className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300"
+            className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 transition-colors"
           >
             Forgot password?
           </button>
@@ -108,11 +128,12 @@ export function LoginForm({ onSubmit, onSwitchToSignup, onForgotPassword, error 
           label={isLoading ? 'Signing in...' : 'Sign in'} 
           isLoading={isLoading}
           icon={isLoading ? Loader2 : undefined}
+          disabled={!credentials.email || !credentials.password}
         />
       </form>
 
-      <p className="mt-6 text-center text-sm text-gray-600 dark:text-gray-400">
-        Don't have an account?{' '}
+      <div className="mt-6 flex items-center justify-center space-x-1 text-sm text-gray-600 dark:text-gray-400">
+        <span>Don't have an account?</span>
         <button
           type="button"
           onClick={onSwitchToSignup}
@@ -120,7 +141,7 @@ export function LoginForm({ onSubmit, onSwitchToSignup, onForgotPassword, error 
         >
           Sign up
         </button>
-      </p>
+      </div>
     </div>
   );
 }

@@ -36,7 +36,7 @@ registerRoute(
     cacheName: 'images',
     plugins: [
       new ExpirationPlugin({
-        maxEntries: 60,
+        maxEntries: 100,
         maxAgeSeconds: 30 * 24 * 60 * 60, // 30 Days
       }),
       new CacheableResponsePlugin({
@@ -62,10 +62,19 @@ registerRoute(
   },
   new StaleWhileRevalidate({
     cacheName: 'static-resources',
+    plugins: [
+      new CacheableResponsePlugin({
+        statuses: [0, 200],
+      }),
+      new ExpirationPlugin({
+        maxEntries: 100,
+        maxAgeSeconds: 7 * 24 * 60 * 60, // 7 days
+      }),
+    ],
   })
 );
 
-// Enhanced caching for HomePage and RoutinePage
+// Enhanced caching for critical pages - improved implementation
 registerRoute(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ({ url }: { url: any }) => {
@@ -76,18 +85,22 @@ registerRoute(
         url.protocol === 'brave:') {
       return false;
     }
+    
+    // Cache Home, Upcoming, Search, and Routine page routes
     return url.pathname === '/' || 
+           url.pathname === '/upcoming' || 
+           url.pathname === '/search' ||
            url.pathname === '/routine' || 
            url.pathname.startsWith('/static/');
   },
-  new StaleWhileRevalidate({
+  new NetworkFirst({
     cacheName: 'app-pages',
     plugins: [
       new CacheableResponsePlugin({
         statuses: [0, 200],
       }),
       new ExpirationPlugin({
-        maxEntries: 20,
+        maxEntries: 30,
         maxAgeSeconds: 7 * 24 * 60 * 60, // 7 days
       }),
     ],
@@ -111,14 +124,14 @@ registerRoute(
     cacheName: 'api-responses',
     plugins: [
       new ExpirationPlugin({
-        maxEntries: 100,
+        maxEntries: 150,
         maxAgeSeconds: 24 * 60 * 60, // 24 hours
       }),
     ],
   })
 );
 
-// Cache data requests for homepage and routine page with specific caching strategy
+// Enhanced cache for critical data used in Home, Upcoming, Search, and Routine pages
 registerRoute(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ({ url }: { url: any }) => {
@@ -131,7 +144,9 @@ registerRoute(
     } 
     return url.pathname.includes('/task') || 
            url.pathname.includes('/routine') || 
-           url.pathname.includes('/user');
+           url.pathname.includes('/user') ||
+           url.pathname.includes('/course') ||
+           url.pathname.includes('/teacher');
   },
   new NetworkFirst({
     cacheName: 'app-data',
@@ -140,7 +155,7 @@ registerRoute(
         statuses: [0, 200],
       }),
       new ExpirationPlugin({
-        maxEntries: 60,
+        maxEntries: 100,
         maxAgeSeconds: 12 * 60 * 60, // 12 hours
       }),
     ],
@@ -223,7 +238,7 @@ const bgSyncPlugin = new workbox.backgroundSync.BackgroundSyncPlugin('offlineQue
   maxRetentionTime: 24 * 60 // Retry for up to 24 Hours
 });
 
-// Replace regex-based route with callback function to properly check URL
+// Updated API routes for tasks, routines, courses, etc. to use background sync
 registerRoute(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ({ url }: { url: any }) => {
@@ -234,12 +249,49 @@ registerRoute(
         url.protocol === 'brave:') {
       return false;
     }
-    return url.pathname.match(/\/api\/.*/);
+    return url.pathname.match(/\/api\/(tasks|routines|courses|teachers).*/);
   },
   new NetworkFirst({
     plugins: [bgSyncPlugin]
   }),
   'POST'
+);
+
+// Also handle PUT and DELETE requests for tasks and routines
+registerRoute(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ({ url }: { url: any }) => {
+    // Skip unsupported URL schemes
+    if (url.protocol === 'chrome-extension:' || 
+        url.protocol === 'chrome:' ||
+        url.protocol === 'edge:' ||
+        url.protocol === 'brave:') {
+      return false;
+    }
+    return url.pathname.match(/\/api\/(tasks|routines).*/);
+  },
+  new NetworkFirst({
+    plugins: [bgSyncPlugin]
+  }),
+  'PUT'
+);
+
+registerRoute(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  ({ url }: { url: any }) => {
+    // Skip unsupported URL schemes
+    if (url.protocol === 'chrome-extension:' || 
+        url.protocol === 'chrome:' ||
+        url.protocol === 'edge:' ||
+        url.protocol === 'brave:') {
+      return false;
+    }
+    return url.pathname.match(/\/api\/(tasks|routines).*/);
+  },
+  new NetworkFirst({
+    plugins: [bgSyncPlugin]
+  }),
+  'DELETE'
 );
 
 // Add a global error handler to catch unexpected errors

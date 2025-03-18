@@ -65,29 +65,34 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [isResetPasswordFlow, setIsResetPasswordFlow] = useState(false);
 
+  // Check URL hash for password recovery path
+  const checkHashForRecovery = () => {
+    const hash = window.location.hash;
+    console.log('Current URL hash:', hash);
+    
+    // If the URL contains the recovery path, set the reset password flow
+    if (hash.includes('#auth/recovery')) {
+      console.log('Recovery path detected in URL - showing password reset UI');
+      setIsResetPasswordFlow(true);
+    }
+  };
+  
+  // Check hash on initial load and when it changes
   useEffect(() => {
     // Simulate initial loading
     const timer = setTimeout(() => {
       setIsLoading(false);
     }, 2000);
 
-    // Check URL hash for password recovery path
-    const checkHashForRecovery = () => {
-      const hash = window.location.hash;
-      console.log('Current URL hash:', hash);
-      
-      // If the URL contains the recovery path, set the reset password flow
-      if (hash.includes('#auth/recovery')) {
-        console.log('Recovery path detected in URL');
-        setIsResetPasswordFlow(true);
-      }
-    };
-    
     // Check hash on initial load
     checkHashForRecovery();
     
     // Also listen for hash changes
-    window.addEventListener('hashchange', checkHashForRecovery);
+    const handleHashChange = () => {
+      checkHashForRecovery();
+    };
+    
+    window.addEventListener('hashchange', handleHashChange);
 
     // Listen for auth state changes, including password recovery
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
@@ -106,7 +111,7 @@ export default function App() {
     return () => {
       clearTimeout(timer);
       subscription.unsubscribe();
-      window.removeEventListener('hashchange', checkHashForRecovery);
+      window.removeEventListener('hashchange', handleHashChange);
     };
   }, []);
 
@@ -140,13 +145,39 @@ export default function App() {
   const syncAllOfflineChanges = async () => {
     try {
       console.log('Syncing all offline changes...');
-      // Sync tasks
-      await syncOfflineChanges();
-      // Sync routines
-      await syncRoutineChanges();
-      console.log('All offline changes synced successfully');
+      
+      let tasksSuccess = true;
+      let routinesSuccess = true;
+      
+      // Sync tasks with error handling
+      try {
+        await syncOfflineChanges();
+        console.log('Tasks synced successfully');
+      } catch (err) {
+        console.error('Error syncing tasks:', err);
+        tasksSuccess = false;
+      }
+      
+      // Sync routines with error handling
+      try {
+        await syncRoutineChanges();
+        console.log('Routines synced successfully');
+      } catch (err) {
+        console.error('Error syncing routines:', err);
+        routinesSuccess = false;
+      }
+      
+      // Log overall sync status
+      if (tasksSuccess && routinesSuccess) {
+        console.log('All offline changes synced successfully');
+      } else {
+        console.warn('Some offline changes failed to sync');
+      }
+      
+      // Refresh data regardless of sync outcome to ensure UI is updated
+      refreshTasks();
     } catch (error) {
-      console.error('Error syncing offline changes:', error);
+      console.error('Error in sync process:', error);
     }
   };
 
@@ -162,7 +193,7 @@ export default function App() {
   if (!user) {
     return (
       <AuthPage
-        onLogin={login}
+        onLogin={(credentials, rememberMe = false) => login(credentials, rememberMe)}
         onSignup={signup}
         onForgotPassword={forgotPassword}
         error={authError || undefined}

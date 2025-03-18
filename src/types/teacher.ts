@@ -1,3 +1,5 @@
+import { Course } from './course';
+
 export interface Teacher {
   id: string;
   name: string;
@@ -7,9 +9,12 @@ export interface Teacher {
   createdAt: string;
   createdBy: string;
   courses?: Course[];
+  _isOffline?: boolean;
+  _isOfflineUpdated?: boolean;
+  _isOfflineDeleted?: boolean;
 }
 
-export type NewTeacher = Omit<Teacher, 'id' | 'createdAt' | 'createdBy' | 'courses'>;
+export type NewTeacher = Omit<Teacher, 'id' | 'createdAt' | 'createdBy' | 'courses' | '_isOffline' | '_isOfflineUpdated' | '_isOfflineDeleted'>;
 
 export interface TeacherCourse {
   teacherId: string;

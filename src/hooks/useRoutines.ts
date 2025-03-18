@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '../lib/supabase';
 import { 
   fetchRoutines,
@@ -13,41 +13,20 @@ import {
 } from '../services/routine.service';
 import type { Routine, RoutineSlot } from '../types/routine';
 import { useOfflineStatus } from './useOfflineStatus';
-import { saveToIndexedDB, getAllFromIndexedDB, STORES } from '../utils/offlineStorage';
+import { saveToIndexedDB, getAllFromIndexedDB, STORES, getByIdFromIndexedDB } from '../utils/offlineStorage';
+
+// Define timestamp for cached data
+const CACHE_TIMESTAMP_KEY = 'routines_last_fetched';
 
 export function useRoutines() {
   const [routines, setRoutines] = useState<Routine[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [syncInProgress, setSyncInProgress] = useState(false);
   const isOffline = useOfflineStatus();
 
-  useEffect(() => {
-    loadRoutines();
-
-    // Only subscribe to changes when online
-    if (!isOffline) {
-      const subscription = supabase
-        .channel('routines')
-        .on(
-          'postgres_changes',
-          {
-            event: '*',
-            schema: 'public',
-            table: 'routines'
-          },
-          () => {
-            loadRoutines();
-          }
-        )
-        .subscribe();
-
-      return () => {
-        subscription.unsubscribe();
-      };
-    }
-  }, [isOffline]);
-
-  const loadRoutines = async () => {
+  // Improved load routines function with cache validation
+  const loadRoutines = useCallback(async (forceRefresh = false) => {
     try {
       setLoading(true);
       
@@ -63,14 +42,38 @@ export function useRoutines() {
           setRoutines([]);
         }
       } else {
-        // When online, fetch from API and save to IndexedDB
-        const data = await fetchRoutines();
-        setRoutines(data);
+        // When online, check if we need to refresh cache
+        const lastFetched = localStorage.getItem(CACHE_TIMESTAMP_KEY);
+        const cacheAge = lastFetched ? Date.now() - parseInt(lastFetched) : Infinity;
+        const cacheExpired = cacheAge > 1000 * 60 * 15; // 15 minutes cache lifetime
         
-        // Store routines in IndexedDB for offline use
-        if (data && data.length > 0) {
-          await saveToIndexedDB(STORES.ROUTINES, data);
-          console.log('Saved routines to IndexedDB for offline use');
+        if (forceRefresh || cacheExpired) {
+          // Fetch from API and save to IndexedDB
+          const data = await fetchRoutines();
+          setRoutines(data);
+          
+          // Store routines in IndexedDB for offline use
+          if (data && data.length > 0) {
+            await saveToIndexedDB(STORES.ROUTINES, data);
+            // Update cache timestamp
+            localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+            console.log('Saved routines to IndexedDB for offline use');
+          }
+        } else {
+          // Use cached data for better performance
+          console.log('Using cached routines - cache age:', Math.round(cacheAge / 1000), 'seconds');
+          const cachedRoutines = await getAllFromIndexedDB(STORES.ROUTINES);
+          if (cachedRoutines && cachedRoutines.length > 0) {
+            setRoutines(cachedRoutines);
+          } else {
+            // If cache is empty, force a refresh
+            const data = await fetchRoutines();
+            setRoutines(data);
+            if (data && data.length > 0) {
+              await saveToIndexedDB(STORES.ROUTINES, data);
+              localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+            }
+          }
         }
       }
     } catch (err: any) {
@@ -91,6 +94,259 @@ export function useRoutines() {
       }
     } finally {
       setLoading(false);
+    }
+  }, [isOffline]);
+
+  useEffect(() => {
+    loadRoutines();
+
+    // Only subscribe to changes when online
+    if (!isOffline) {
+      const subscription = supabase
+        .channel('routines')
+        .on(
+          'postgres_changes',
+          {
+            event: '*',
+            schema: 'public',
+            table: 'routines'
+          },
+          () => {
+            loadRoutines(true); // Force refresh on database changes
+          }
+        )
+        .subscribe();
+
+      return () => {
+        subscription.unsubscribe();
+      };
+    }
+  }, [isOffline, loadRoutines]);
+
+  // Enhanced offline sync with improved progress tracking and error handling
+  const syncOfflineChanges = async () => {
+    if (isOffline || syncInProgress) return; // Only sync when online and not already syncing
+    
+    try {
+      setSyncInProgress(true);
+      console.log('Starting routine sync process...');
+      
+      const offlineRoutines = await getAllFromIndexedDB(STORES.ROUTINES);
+      let syncedRoutines = [...offlineRoutines];
+      let hasChanges = false;
+      let syncErrors = 0;
+      
+      // Process each routine for offline changes
+      for (const routine of offlineRoutines) {
+        // Skip routines without offline changes
+        if (!routine._isOffline && 
+            !routine._isOfflineUpdated && 
+            !routine._isOfflineDeleted && 
+            !routine._needsActivationSync && 
+            !routine._needsDeactivationSync && 
+            !routine.slots?.some(slot => slot._isOffline || slot._isOfflineUpdated || slot._isOfflineDeleted)) {
+          continue;
+        }
+        
+        console.log(`Syncing routine: ${routine.id} (${routine.name})`);
+        
+        // Handle routine deletions
+        if (routine._isOfflineDeleted) {
+          try {
+            await deleteRoutineService(routine.id);
+            syncedRoutines = syncedRoutines.filter(r => r.id !== routine.id);
+            hasChanges = true;
+            console.log(`Deleted routine: ${routine.id}`);
+          } catch (err) {
+            console.error(`Failed to sync delete for routine ${routine.id}:`, err);
+            syncErrors++;
+          }
+          continue;
+        }
+        
+        // Handle activation/deactivation
+        if (routine._needsActivationSync) {
+          try {
+            await activateRoutineService(routine.id);
+            const routineIndex = syncedRoutines.findIndex(r => r.id === routine.id);
+            if (routineIndex >= 0) {
+              syncedRoutines[routineIndex] = { 
+                ...syncedRoutines[routineIndex], 
+                isActive: true,
+                _needsActivationSync: undefined 
+              };
+              hasChanges = true;
+            }
+            console.log(`Activated routine: ${routine.id}`);
+          } catch (err) {
+            console.error(`Failed to sync activation for routine ${routine.id}:`, err);
+            syncErrors++;
+          }
+        } else if (routine._needsDeactivationSync) {
+          try {
+            await deactivateRoutineService(routine.id);
+            const routineIndex = syncedRoutines.findIndex(r => r.id === routine.id);
+            if (routineIndex >= 0) {
+              syncedRoutines[routineIndex] = { 
+                ...syncedRoutines[routineIndex], 
+                isActive: false,
+                _needsDeactivationSync: undefined 
+              };
+              hasChanges = true;
+            }
+            console.log(`Deactivated routine: ${routine.id}`);
+          } catch (err) {
+            console.error(`Failed to sync deactivation for routine ${routine.id}:`, err);
+            syncErrors++;
+          }
+        }
+        
+        // Handle new routines created offline
+        if (routine._isOffline) {
+          try {
+            // Remove offline flags and generate clean data
+            const { _isOffline, id, ...routineData } = routine;
+            const newRoutine = await createRoutineService(routineData);
+            
+            // Replace the temp routine with the server one
+            syncedRoutines = syncedRoutines.filter(r => r.id !== routine.id);
+            syncedRoutines.push(newRoutine);
+            hasChanges = true;
+            console.log(`Created new routine: ${newRoutine.id} (replaced temp: ${routine.id})`);
+          } catch (err) {
+            console.error(`Failed to sync new routine ${routine.id}:`, err);
+            syncErrors++;
+          }
+          continue;
+        }
+        
+        // Handle routine updates
+        if (routine._isOfflineUpdated) {
+          try {
+            // Create a clean version without offline flags
+            const { _isOfflineUpdated, _isOffline, _needsActivationSync, _needsDeactivationSync, slots, ...routineData } = routine;
+            await updateRoutineService(routine.id, routineData);
+            
+            // Update the synced version
+            const index = syncedRoutines.findIndex(r => r.id === routine.id);
+            if (index >= 0) {
+              syncedRoutines[index] = { 
+                ...syncedRoutines[index], 
+                ...routineData,
+                _isOfflineUpdated: undefined 
+              };
+              hasChanges = true;
+            }
+            console.log(`Updated routine: ${routine.id}`);
+          } catch (err) {
+            console.error(`Failed to sync routine update ${routine.id}:`, err);
+            syncErrors++;
+          }
+        }
+        
+        // Handle slot changes
+        if (routine.slots && routine.slots.length > 0) {
+          let slotsChanged = false;
+          const syncedSlots = [...routine.slots];
+          
+          for (const slot of routine.slots) {
+            // Skip slots without offline changes
+            if (!slot._isOffline && !slot._isOfflineUpdated && !slot._isOfflineDeleted) {
+              continue;
+            }
+            
+            // Handle slot deletions
+            if (slot._isOfflineDeleted) {
+              try {
+                await deleteRoutineSlotService(routine.id, slot.id);
+                const slotIndex = syncedSlots.findIndex(s => s.id === slot.id);
+                if (slotIndex >= 0) {
+                  syncedSlots.splice(slotIndex, 1);
+                  slotsChanged = true;
+                }
+                console.log(`Deleted slot: ${slot.id} from routine: ${routine.id}`);
+              } catch (err) {
+                console.error(`Failed to sync slot deletion ${slot.id}:`, err);
+                syncErrors++;
+              }
+              continue;
+            }
+            
+            // Handle new slots
+            if (slot._isOffline) {
+              try {
+                const { _isOffline, id, routineId, createdAt, ...slotData } = slot;
+                const newSlot = await addRoutineSlotService(routine.id, slotData);
+                
+                // Replace temp slot with server one
+                const slotIndex = syncedSlots.findIndex(s => s.id === slot.id);
+                if (slotIndex >= 0) {
+                  syncedSlots[slotIndex] = newSlot;
+                  slotsChanged = true;
+                }
+                console.log(`Created new slot: ${newSlot.id} (replaced temp: ${slot.id})`);
+              } catch (err) {
+                console.error(`Failed to sync new slot ${slot.id}:`, err);
+                syncErrors++;
+              }
+              continue;
+            }
+            
+            // Handle slot updates
+            if (slot._isOfflineUpdated) {
+              try {
+                const { _isOfflineUpdated, _isOffline, ...slotData } = slot;
+                await updateRoutineSlotService(routine.id, slot.id, slotData);
+                
+                // Update slot in synced version
+                const slotIndex = syncedSlots.findIndex(s => s.id === slot.id);
+                if (slotIndex >= 0) {
+                  syncedSlots[slotIndex] = { 
+                    ...slotData, 
+                    id: slot.id, 
+                    routineId: routine.id,
+                    _isOfflineUpdated: undefined
+                  };
+                  slotsChanged = true;
+                }
+                console.log(`Updated slot: ${slot.id}`);
+              } catch (err) {
+                console.error(`Failed to sync slot update ${slot.id}:`, err);
+                syncErrors++;
+              }
+            }
+          }
+          
+          // Update routine with synced slots
+          if (slotsChanged) {
+            const routineIndex = syncedRoutines.findIndex(r => r.id === routine.id);
+            if (routineIndex >= 0) {
+              syncedRoutines[routineIndex] = {
+                ...syncedRoutines[routineIndex],
+                slots: syncedSlots
+              };
+              hasChanges = true;
+            }
+          }
+        }
+      }
+      
+      // Save synced routines back to IndexedDB and update state
+      if (hasChanges) {
+        await saveToIndexedDB(STORES.ROUTINES, syncedRoutines);
+        setRoutines(syncedRoutines);
+        // Update timestamp after successful sync
+        localStorage.setItem(CACHE_TIMESTAMP_KEY, Date.now().toString());
+        console.log(`Offline routine changes synced with ${syncErrors} errors`);
+      } else {
+        console.log('No offline routine changes to sync');
+      }
+      
+    } catch (err) {
+      console.error('Error syncing offline routine changes:', err);
+      setError('Failed to sync offline changes');
+    } finally {
+      setSyncInProgress(false);
     }
   };
 
@@ -456,147 +712,6 @@ export function useRoutines() {
     }
   };
 
-  // Sync offline changes when back online
-  const syncOfflineChanges = async () => {
-    if (isOffline) return; // Only sync when online
-    
-    try {
-      const offlineRoutines = await getAllFromIndexedDB(STORES.ROUTINES);
-      let syncedRoutines = [...offlineRoutines];
-      let hasChanges = false;
-      
-      // Process each routine for offline changes
-      for (const routine of offlineRoutines) {
-        // Handle routine deletions
-        if (routine._isOfflineDeleted) {
-          try {
-            await deleteRoutineService(routine.id);
-            syncedRoutines = syncedRoutines.filter(r => r.id !== routine.id);
-            hasChanges = true;
-          } catch (err) {
-            console.error(`Failed to sync delete for routine ${routine.id}:`, err);
-          }
-          continue;
-        }
-        
-        // Handle new routines created offline
-        if (routine._isOffline) {
-          try {
-            // Remove offline flags
-            const { _isOffline, ...routineData } = routine;
-            const newRoutine = await createRoutineService(routineData);
-            
-            // Replace the temp routine with the server one
-            syncedRoutines = syncedRoutines.filter(r => r.id !== routine.id);
-            syncedRoutines.push(newRoutine);
-            hasChanges = true;
-          } catch (err) {
-            console.error(`Failed to sync new routine ${routine.id}:`, err);
-          }
-          continue;
-        }
-        
-        // Handle routine updates
-        if (routine._isOfflineUpdated) {
-          try {
-            const { _isOfflineUpdated, ...routineData } = routine;
-            await updateRoutineService(routine.id, routineData);
-            
-            // Update the synced version
-            const index = syncedRoutines.findIndex(r => r.id === routine.id);
-            if (index >= 0) {
-              syncedRoutines[index] = { ...routineData };
-              hasChanges = true;
-            }
-          } catch (err) {
-            console.error(`Failed to sync routine update ${routine.id}:`, err);
-          }
-        }
-        
-        // Handle slot changes
-        if (routine.slots && routine.slots.length > 0) {
-          let slotsChanged = false;
-          const syncedSlots = [...routine.slots];
-          
-          for (const slot of routine.slots) {
-            // Handle slot deletions
-            if (slot._isOfflineDeleted) {
-              try {
-                await deleteRoutineSlotService(routine.id, slot.id);
-                const slotIndex = syncedSlots.findIndex(s => s.id === slot.id);
-                if (slotIndex >= 0) {
-                  syncedSlots.splice(slotIndex, 1);
-                  slotsChanged = true;
-                }
-              } catch (err) {
-                console.error(`Failed to sync slot deletion ${slot.id}:`, err);
-              }
-              continue;
-            }
-            
-            // Handle new slots
-            if (slot._isOffline) {
-              try {
-                const { _isOffline, id, routineId, createdAt, ...slotData } = slot;
-                const newSlot = await addRoutineSlotService(routine.id, slotData);
-                
-                // Replace temp slot with server one
-                const slotIndex = syncedSlots.findIndex(s => s.id === slot.id);
-                if (slotIndex >= 0) {
-                  syncedSlots[slotIndex] = newSlot;
-                  slotsChanged = true;
-                }
-              } catch (err) {
-                console.error(`Failed to sync new slot ${slot.id}:`, err);
-              }
-              continue;
-            }
-            
-            // Handle slot updates
-            if (slot._isOfflineUpdated) {
-              try {
-                const { _isOfflineUpdated, ...slotData } = slot;
-                await updateRoutineSlotService(routine.id, slot.id, slotData);
-                
-                // Update slot in synced version
-                const slotIndex = syncedSlots.findIndex(s => s.id === slot.id);
-                if (slotIndex >= 0) {
-                  syncedSlots[slotIndex] = { ...slotData, id: slot.id, routineId: routine.id };
-                  slotsChanged = true;
-                }
-              } catch (err) {
-                console.error(`Failed to sync slot update ${slot.id}:`, err);
-              }
-            }
-          }
-          
-          // Update routine with synced slots
-          if (slotsChanged) {
-            const routineIndex = syncedRoutines.findIndex(r => r.id === routine.id);
-            if (routineIndex >= 0) {
-              syncedRoutines[routineIndex] = {
-                ...syncedRoutines[routineIndex],
-                slots: syncedSlots
-              };
-              hasChanges = true;
-            }
-          }
-        }
-      }
-      
-      // Save synced routines back to IndexedDB and update state
-      if (hasChanges) {
-        await saveToIndexedDB(STORES.ROUTINES, syncedRoutines);
-        setRoutines(syncedRoutines);
-        console.log('Offline routine changes synced successfully');
-      }
-      
-    } catch (err) {
-      console.error('Error syncing offline routine changes:', err);
-      setError('Failed to sync offline changes');
-    }
-  };
-
   return {
     routines,
     loading,
@@ -706,6 +821,8 @@ export function useRoutines() {
       }
     },
     syncOfflineChanges,
+    refreshRoutines: () => loadRoutines(true),
+    isSyncing: syncInProgress,
     isOffline
   };
 }

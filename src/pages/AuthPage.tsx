@@ -5,7 +5,7 @@ import { ForgotPasswordForm } from '../components/auth/ForgotPasswordForm';
 import type { LoginCredentials, SignupCredentials } from '../types/auth';
 
 interface AuthPageProps {
-  onLogin: (credentials: LoginCredentials) => Promise<void>;
+  onLogin: (credentials: LoginCredentials, rememberMe?: boolean) => Promise<void>;
   onSignup: (credentials: SignupCredentials) => Promise<void>;
   onForgotPassword: (email: string) => Promise<void>;
   error?: string;

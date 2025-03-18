@@ -3,12 +3,23 @@ import { supabase } from '../lib/supabase';
 import { loginUser, signupUser, logoutUser, resetPassword } from '../services/auth.service';
 import type { User, LoginCredentials, SignupCredentials } from '../types/auth';
 
+// LocalStorage key for saved credentials
+const REMEMBER_ME_KEY = 'nesttask_remember_me';
+const SAVED_EMAIL_KEY = 'nesttask_saved_email';
+
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [savedEmail, setSavedEmail] = useState<string | null>(null);
 
   useEffect(() => {
+    // Load saved email from local storage if it exists
+    const savedEmail = localStorage.getItem(SAVED_EMAIL_KEY);
+    if (savedEmail) {
+      setSavedEmail(savedEmail);
+    }
+    
     checkSession();
     const { data: { subscription } } = supabase.auth.onAuthStateChange(handleAuthChange);
     return () => {
@@ -54,9 +65,20 @@ export function useAuth() {
     }
   };
 
-  const login = async (credentials: LoginCredentials) => {
+  const login = async (credentials: LoginCredentials, rememberMe: boolean = false) => {
     try {
       setError(null);
+      
+      // Handle "Remember me" option
+      if (rememberMe) {
+        localStorage.setItem(REMEMBER_ME_KEY, 'true');
+        localStorage.setItem(SAVED_EMAIL_KEY, credentials.email);
+      } else {
+        // Clear saved credentials if "Remember me" is not checked
+        localStorage.removeItem(REMEMBER_ME_KEY);
+        localStorage.removeItem(SAVED_EMAIL_KEY);
+      }
+      
       const user = await loginUser(credentials);
       setUser(user);
     } catch (err: any) {
@@ -81,6 +103,11 @@ export function useAuth() {
       setError(null);
       await logoutUser();
       setUser(null);
+      
+      // Keep the saved email if "Remember me" was checked
+      if (localStorage.getItem(REMEMBER_ME_KEY) !== 'true') {
+        localStorage.removeItem(SAVED_EMAIL_KEY);
+      }
     } catch (err: any) {
       setError(err.message);
       throw err;
@@ -105,5 +132,6 @@ export function useAuth() {
     signup,
     logout,
     forgotPassword,
+    savedEmail,
   };
 }

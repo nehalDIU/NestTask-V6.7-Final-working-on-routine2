@@ -10,6 +10,9 @@ export interface Course {
   blcEnrollKey?: string;
   createdAt: string;
   createdBy: string;
+  _isOffline?: boolean;
+  _isOfflineUpdated?: boolean;
+  _isOfflineDeleted?: boolean;
 }
 
 export interface ClassTime {
@@ -49,6 +52,9 @@ export interface StudyMaterial {
   createdAt: string;
   createdBy: string;
   course?: Course;
+  _isOffline?: boolean;
+  _isOfflineUpdated?: boolean;
+  _isOfflineDeleted?: boolean;
 }
 
-export type NewStudyMaterial = Omit<StudyMaterial, 'id' | 'createdAt' | 'createdBy' | 'course'>;
+export type NewStudyMaterial = Omit<StudyMaterial, 'id' | 'createdAt' | 'createdBy' | 'course' | '_isOffline' | '_isOfflineUpdated' | '_isOfflineDeleted'>;
