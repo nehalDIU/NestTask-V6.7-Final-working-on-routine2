@@ -1,5 +1,5 @@
 import { formatDate } from '../utils/dateUtils';
-import type { Task } from '../types';
+import type { Task } from '../types/task';
 import type { Announcement } from '../types/announcement';
 
 const TELEGRAM_BOT_TOKEN = import.meta.env.VITE_TELEGRAM_BOT_TOKEN;
