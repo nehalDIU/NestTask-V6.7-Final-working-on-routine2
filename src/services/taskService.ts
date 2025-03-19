@@ -1,5 +1,6 @@
 import { supabase } from '../lib/supabase';
-import type { Task, NewTask } from '../types/task';
+import type { Task, NewTask, TaskCategory, TaskStatus } from '../types/task';
+import { sendTaskNotification } from './telegram.service';
 
 export async function fetchUserRole(userId: string) {
   try {
@@ -49,7 +50,19 @@ export async function createTask(userId: string, task: NewTask, isAdmin: boolean
       throw new Error('Failed to create task');
     }
 
-    return mapTaskFromDB(data);
+    const newTask = mapTaskFromDB(data);
+    
+    // Send notification to Telegram if it's an admin task
+    if (isAdmin) {
+      try {
+        await sendTaskNotification(newTask);
+      } catch (notificationError) {
+        console.error('Error sending Telegram notification:', notificationError);
+        // Don't throw error, so task creation still succeeds even if notification fails
+      }
+    }
+
+    return newTask;
   } catch (error) {
     console.error('Error creating task:', error);
     throw new Error('Failed to create task');
